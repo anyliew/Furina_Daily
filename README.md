@@ -103,8 +103,9 @@ git clone --depth 1 https://github.com/anyliew/Furina_Daily.git
 - `pushTimes`：推送时间，Cron 表达式列表，默认 `0 10 * * *` / `0 22 * * *`，至少一个、可自行增删
 - `refreshTimes`：缓存刷新时间，Cron 表达式列表，默认 `30 7 * * *` / `30 9 * * *` / `30 17 * * *` / `0 21 * * *`，
   至少一个、可自行增删；到点只预生成图片、不发消息
-- **推送对象**：不设本地配置项，唯一来源是订阅表——在群里发送 `开启日报推送` / `关闭日报推送` 增删，
-  也可在 GsCore WebConsole 的「订阅管理」页查看与删除；`日报清空配置` 只重置配置，不会退订
+- **推送对象（reportGroup）**：接收日报推送的群号列表，是唯一的配置来源——群内 `开启日报推送` / `关闭日报推送`
+  自动维护，也可在 WebConsole 手动编辑；改动 1 分钟内自动同步订阅表（新增补订、移除退订），
+  实际投递走 GsCore 订阅表，可在「订阅管理」页查看；留空表示没有群订阅
 - `theme` / `hotModule` / `sideModule`：主题与板块（中文下拉；默认「素白简讯 / 抖音热搜 / 哔哩哔哩热搜」）
 - `LOGO图片` / `标题字体` / `模块标题字体` / `正文字体`：可在 WebConsole 直接上传，文件保存在 `data/Furina_Daily/custom/`；留空或未上传时回退到插件内置资源
 - `compressImage` / `compressFormat`：压缩开关与格式
@@ -117,12 +118,12 @@ git clone --depth 1 https://github.com/anyliew/Furina_Daily.git
 
 | 相对路径 | 内容 | 说明 |
 |----------|------|------|
-| `data/Furina_Daily/config.json` | 插件配置 | WebConsole 保存的全部配置（推送/刷新时间、主题、数据源等） |
+| `data/Furina_Daily/config.json` | 插件配置 | WebConsole 保存的全部配置（推送/刷新时间、**推送群列表**、主题、数据源等） |
 | `data/Furina_Daily/output/` | 成品日报图 | `fufu-<日期>-<时间>.png/.webp`，自动只保留最近 3 张；渲染用的临时 HTML 也写在这里，截图完即删 |
 | `data/Furina_Daily/cache/` | 帮助图临时文件 | `_help.html`，渲染完成即删 |
 | `data/Furina_Daily/custom/` | 上传资源 | WebConsole 上传的 LOGO / 三套字体；留空或未上传时回退插件内置资源 |
 | `data/Furina_Daily/daily_<时间戳>.json` | 配置备份 | `日报清空配置` 自动生成，只保留最近 5 份 |
-| `data/GsData.db` | 推送订阅 | `开启/关闭日报推送` 写入 GsCore 的 Subscribe 表；重装插件不丢订阅，清空该库才会丢 |
+| `data/GsData.db` | 推送订阅 | 订阅表是 `reportGroup` 的镜像（实际投递走这里）；重装插件不丢订阅 |
 | `data/help/` | 帮助一览缓存 | GsCore 生成的 `Furina_Daily_*.jpg` 插件帮助图 |
 
 只读资源随插件分发，在插件目录 `Furina_Daily/Furina_Daily/resource/` 下：`html/`（模板）、`font/`（字体）、`images/`、`svg/`、`mock/`（`日报模拟` 用的本地示例数据），随插件更新而更新。

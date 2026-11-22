@@ -196,7 +196,13 @@ async def subscribe_group(bot: Bot, ev: Event) -> None:
         task_name=TASK_NAME,
         event=ev,
     )
+    # reportGroup 是推送群的唯一数据源，命令写它，订阅表由定时巡检对齐
     config = get_config()
+    group = str(ev.group_id)
+    groups = list(config["reportGroup"])
+    if group not in groups:
+        groups.append(group)
+        set_value("reportGroup", groups)
     times = "、".join(cron_human(item) for item in config["pushTimes"])
     await bot.send(f"✅ 已开启日报推送！本群将在每日 {times} 自动收到日报。")
 
@@ -209,6 +215,10 @@ async def unsubscribe_group(bot: Bot, ev: Event) -> None:
     from gsuid_core.subscribe import gs_subscribe
 
     await gs_subscribe.delete_subscribe("session", TASK_NAME, ev)
+    # 空列表也照常写入：推送群配置始终实际存在
+    config = get_config()
+    groups = [g for g in config["reportGroup"] if g != str(ev.group_id)]
+    set_value("reportGroup", groups)
     await bot.send("❎ 已关闭日报推送。")
 
 
@@ -272,18 +282,6 @@ def _prune_backups(parent: Path) -> int:
     return removed
 
 
-async def _subscription_count() -> int:
-    """当前推送订阅数；查不到就返回 0，不影响重置流程。"""
-    from gsuid_core.subscribe import gs_subscribe
-
-    try:
-        subs = await gs_subscribe.get_subscribe(TASK_NAME)
-    except Exception as exc:  # noqa: BLE001 - 仅用于文案提示
-        logger.warning(f"[芙芙日报] 查询推送订阅失败: {exc}")
-        return 0
-    return len(subs) if subs else 0
-
-
 @sv_admin.on_fullmatch("日报清空配置", block=True)
 async def clear_config(bot: Bot, ev: Event) -> None:
     from copy import deepcopy
@@ -302,7 +300,7 @@ async def clear_config(bot: Bot, ev: Event) -> None:
         furina_config.write_config()
 
         _invalidate_cache()
-        from ..push.scheduler import reschedule_jobs
+        from ..push.scheduler import reschedule_jobs, sync_subscriptions
 
         await reschedule_jobs()
 
@@ -310,13 +308,9 @@ async def clear_config(bot: Bot, ev: Event) -> None:
         text = f"✅ 日报配置已重置为默认，原配置备份为 {backup.name}"
         if pruned:
             text += f"（已清理 {pruned} 份更早的备份，最多保留 {BACKUP_KEEP_FILES} 份）"
-        # 配置重置不动订阅表：推送到点仍会执行，必须说清楚
-        count = await _subscription_count()
-        if count:
-            text += (
-                f"\n⚠️ 推送订阅仍保留 {count} 个会话：重置配置不会退订。"
-                "需要停止推送，请到 WebConsole 的订阅管理页删除，或在对应群发送「关闭日报推送」。"
-            )
+        # reportGroup 被重置为空，订阅表会同步退订全部推送群（只动本任务的行）
+        sync_text = await sync_subscriptions()
+        text += f"\n⚠️ 推送群列表已清空，订阅表同步结果：{sync_text}"
         await bot.send(text)
     except Exception as exc:  # noqa: BLE001
         logger.error(f"[芙芙日报] 清空配置失败: {exc}")

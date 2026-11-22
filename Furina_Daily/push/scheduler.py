@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from gsuid_core.aps import scheduler
 from gsuid_core.logger import logger
+from gsuid_core.models import Event
 from gsuid_core.segment import MessageSegment
 from gsuid_core.subscribe import gs_subscribe
 
@@ -38,8 +39,8 @@ JobFunc = Callable[[str], Awaitable[None]]
 # 定时刷新的连续失败计数（失败或存在降级模块都算一次）
 _refresh_fail_streak = 0
 
-# 已注册的时间点签名，用于检测配置改动
-_registered_signature: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+# 已注册的配置签名（推送时间 / 刷新时间 / 推送群列表），用于检测配置改动
+_registered_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None
 
 
 def _effective_times() -> tuple[list[str], list[str]]:
@@ -145,13 +146,98 @@ async def _refresh_cache(refresh_label: str) -> None:
     logger.success(f"[芙芙日报] {refresh_label} 刷新缓存完成（{len(result.image)} bytes）")
 
 
+async def _bot_metadata() -> dict | None:
+    """给「配置里新加的群」找一组能投递的 bot 元数据。
+
+    优先复用本任务已有订阅行的 (bot_id, bot_self_id, WS_BOT_ID)；
+    本任务一条订阅都没有时，仅当恰好只有一个活跃 bot 且能在订阅表里
+    查到它的平台类型才借用——多 bot 在线时无法确定哪个号在那个群里，宁可不猜。
+    """
+    from gsuid_core.utils.database.models import Subscribe
+
+    subs = await gs_subscribe.get_subscribe(TASK_NAME)
+    if subs:
+        first = subs[0]
+        return {
+            "bot_id": first.bot_id,
+            "bot_self_id": first.bot_self_id,
+            "WS_BOT_ID": first.WS_BOT_ID,
+        }
+
+    from gsuid_core.gss import gss
+
+    if len(gss.active_bot) != 1:
+        return None
+    self_id = next(iter(gss.active_bot))
+    rows = await Subscribe.select_rows(distinct=False, bot_self_id=self_id)
+    if not rows:
+        return None
+    return {
+        "bot_id": rows[0].bot_id,
+        "bot_self_id": self_id,
+        "WS_BOT_ID": rows[0].WS_BOT_ID,
+    }
+
+
+async def sync_subscriptions() -> str:
+    """让订阅表与 reportGroup 对齐：配置里有的补订阅，没有的退订。
+
+    reportGroup 是推送群的唯一数据源（WebConsole 与命令都可写），
+    订阅表只是它的镜像，实际投递仍走 sub.send。
+    只动 task_name == TASK_NAME 的行，不影响其他任务的订阅。
+    """
+    config = get_config()
+    groups: list[str] = list(config["reportGroup"])
+
+    subs = await gs_subscribe.get_subscribe(TASK_NAME)
+    group_subs = {str(s.group_id): s for s in (subs or []) if s.group_id}
+
+    added: list[str] = []
+    missing = [g for g in groups if g not in group_subs]
+    if missing:
+        meta = await _bot_metadata()
+        if meta is None:
+            logger.warning(
+                f"[芙芙日报] 推送群 {missing} 无法自动补订阅：还没有任何可用 bot 元数据，"
+                "请先在对应群发送「开启日报推送」建立订阅，之后新群会自动同步"
+            )
+        else:
+            for gid in missing:
+                ev = Event(
+                    bot_id=meta["bot_id"],
+                    bot_self_id=meta["bot_self_id"],
+                    WS_BOT_ID=meta["WS_BOT_ID"],
+                    user_id=gid,
+                    group_id=gid,
+                    user_type="group",
+                )
+                await gs_subscribe.add_subscribe("session", TASK_NAME, ev)
+                added.append(gid)
+
+    removed: list[str] = []
+    for gid in group_subs:
+        if gid not in groups:
+            await gs_subscribe.delete_subscribe(
+                "session",
+                TASK_NAME,
+                Event(user_id=gid, group_id=gid, user_type="group"),
+            )
+            removed.append(gid)
+
+    if added or removed:
+        logger.success(
+            f"[芙芙日报] 推送群配置已同步到订阅表：新增 {added or '无'}，移除 {removed or '无'}"
+        )
+    return f"新增订阅 {len(added)} 个，移除 {len(removed)} 个"
+
+
 async def reschedule_jobs() -> None:
     """按 pushTimes / refreshTimes 重设全部定时任务。"""
     global _registered_signature
 
     push_times, refresh_times = _effective_times()
-    # 记下本次注册签名，供 _watch_config 判断配置是否被改过
-    _registered_signature = (tuple(push_times), tuple(refresh_times))
+    # 记下本次注册签名（含推送群列表），供 _watch_config 判断配置是否被改过
+    _registered_signature = (tuple(push_times), tuple(refresh_times), tuple(get_config()["reportGroup"]))
 
     # 先清掉旧版固定任务与本插件所有任务，避免删掉某个时间后残留旧 job。
     for job in scheduler.get_jobs():
@@ -189,11 +275,13 @@ async def reschedule_jobs() -> None:
 
 
 async def _watch_config() -> None:
-    """轮询推送/刷新时间：WebConsole 保存配置后没有回调，靠这里在 1 分钟内生效。"""
+    """轮询推送/刷新时间与推送群列表：WebConsole 保存配置后没有回调，靠这里在 1 分钟内生效。"""
     push_times, refresh_times = _effective_times()
-    if (tuple(push_times), tuple(refresh_times)) != _registered_signature:
-        logger.info("[芙芙日报] 检测到推送/刷新时间变化，重新注册定时任务")
+    signature = (tuple(push_times), tuple(refresh_times), tuple(get_config()["reportGroup"]))
+    if signature != _registered_signature:
+        logger.info("[芙芙日报] 检测到推送/刷新时间或推送群列表变化，重新注册定时任务")
         await reschedule_jobs()
+        await sync_subscriptions()
 
 
 def _ensure_watch_job() -> None:
@@ -210,6 +298,10 @@ def _ensure_watch_job() -> None:
 
 
 async def setup_jobs() -> None:
-    """框架启动后注册定时任务。"""
+    """框架启动后注册定时任务，并把订阅表对齐到 reportGroup。"""
     _ensure_watch_job()
     await reschedule_jobs()
+    try:
+        await sync_subscriptions()
+    except Exception as exc:  # noqa: BLE001 - 启动时 DB 未就绪不应炸掉注册流程
+        logger.error(f"[芙芙日报] 启动同步推送订阅失败: {exc}")

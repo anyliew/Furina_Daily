@@ -50,11 +50,6 @@ def _migrate_legacy_values() -> None:
         if old_times:
             furina_config.set_config("pushTimes", old_times)
 
-    # 旧版本的 reportGroup 是推送群的本地镜像，与订阅表重复且会脱节，清掉避免误读。
-    if "reportGroup" in furina_config.config:
-        furina_config.config.pop("reportGroup", None)
-        furina_config.write_config()
-
 
 _migrate_legacy_values()
 
@@ -72,6 +67,18 @@ def _time_list(key: str, default: list[str]) -> list[str]:
         if times:
             return times
     return list(default)
+
+
+def _group_list() -> list[str]:
+    """读取推送群列表：去空白、去重、保序；允许为空（没有群订阅也是合法状态）。"""
+    raw = _data("reportGroup")
+    groups: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            group = str(item).strip()
+            if group and group not in groups:
+                groups.append(group)
+    return groups
 
 
 def get_config() -> dict:
@@ -94,6 +101,7 @@ def get_config() -> dict:
     compress = compress_raw if isinstance(compress_raw, bool) else False
 
     return {
+        "reportGroup": _group_list(),
         "pushTimes": _time_list("pushTimes", PUSH_TIMES_DEFAULT),
         "refreshTimes": _time_list("refreshTimes", REFRESH_TIMES_DEFAULT),
         "theme": normalize_theme(_data("theme")),

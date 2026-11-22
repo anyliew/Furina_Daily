@@ -110,8 +110,14 @@ def side_label_for(value: object) -> str | None:
 
 CONFIG_DEFAULT: Dict[str, GSC] = {
     "_div_push": GsDivider("推送配置", ""),
-    # 推送对象不再用本地列表维护：唯一权威来源是 gs_subscribe（WebConsole「订阅管理」页可查），
-    # 旧的 reportGroup 只写不读，容易和订阅表脱节，已在 config/__init__ 里做迁移清理。
+    # 推送群的唯一数据源：命令与 WebConsole 都写这里，订阅表由 sync_subscriptions 对齐成镜像。
+    "reportGroup": GsListStrConfig(
+        title="日报推送群",
+        desc="接收日报推送的群号列表（字符串）。群内命令「开启/关闭日报推送」会自动维护；"
+        "也可在 WebConsole 手动增删，改动 1 分钟内自动同步订阅表（新增补订、移除退订）。"
+        "留空表示当前没有群订阅。",
+        data=[],
+    ),
     "pushTimes": GsListStrConfig(
         title="推送时间",
         desc="Cron 表达式（分 时 日 月 周）。至少一个，可自行添加更多；默认每天 10:00、22:00。",

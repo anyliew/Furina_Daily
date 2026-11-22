@@ -2,7 +2,7 @@
 name = "gscore-furina-daily"
 # 运行时版本号在 Furina_Daily/version.py（GsCore 读它）；打包元数据用这里的值。
 # 改版本时两处一起改，避免 pip 装的版本和插件自报版本对不上。
-version = "2.1.1"
+version = "2.1.2"
 description = "芙芙日报 - GsCore 上的二次元风格每日日报（新闻 / 摸鱼日历 / 热搜 / 新番，多主题出图与定时推送）"
 readme = "README.md"
 license = "GPL-3.0-only"
