@@ -1,0 +1,451 @@
+/* ========================================
+   素白简讯主题
+   配色：纯白 × 黑 × 灰阶
+   氛围：无渐变纯白底、白卡片细灰边、黑色正文
+   ======================================== */
+@font-face {
+  font-family: 'Content';
+  src: url('../../font/Content.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Title';
+  src: url('../../font/Title.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Content', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: #ffffff;
+  padding: 20px 24px 0 24px;
+  min-height: 100vh;
+  position: relative;
+  color: #374151;
+}
+
+.container {
+  max-width: 1360px;
+  margin: 0 auto;
+  background: #ffffff;
+  border-radius: 48px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  position: relative;
+  z-index: 2;
+  border: 1px solid #e5e7eb;
+  padding-bottom: 12px;
+}
+
+.header {
+  background: #ffffff;
+  padding: 50px 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e5e7eb;
+  position: relative;
+}
+
+.logo-area {
+  flex-shrink: 0;
+}
+
+.avatar {
+  width: 175px;
+  height: auto;
+}
+
+.avatar img {
+  width: 100%;
+  height: auto;
+  display: block;
+  box-shadow: none;
+  border: none;
+}
+
+.avatar .default-avatar {
+  font-size: 120px;
+  background: #f9fafb;
+  padding: 16px;
+  display: inline-block;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+}
+
+.title-area {
+  text-align: center;
+  flex: 1;
+  padding: 0 20px;
+}
+
+.title-area h1 {
+  font-family: 'Title', 'Content', 'PingFang SC', sans-serif;
+  color: #1f2937;
+  font-size: 135px;
+  font-weight: 700;
+  letter-spacing: 12px;
+  margin: 0;
+  line-height: 1.2;
+}
+
+/* ================= 日期卡片（白底黑字，细灰边） ================= */
+.date-card {
+  background: #ffffff;
+  padding: 24px 0;
+  border-radius: 40px;
+  text-align: center;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+  min-width: 280px;
+  flex-shrink: 0;
+  font-family: 'Content', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.date-card .weekday {
+  color: #1f2937;
+  font-size: 62px;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-bottom: 10px;
+}
+
+.date-card .gregorian {
+  color: #1f2937;
+  font-size: 38px;
+  font-weight: 500;
+  background: rgba(0, 0, 0, 0.04);
+  border: none;
+  padding: 12px 0;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.date-card .lunar {
+  color: #374151;
+  font-size: 32px;
+  font-weight: 400;
+  margin: 16px 0 2px;
+}
+
+/* ================= 布局与模块 ================= */
+.two-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding: 20px 36px 12px 36px;
+  background: transparent;
+}
+
+.module {
+  background: #ffffff;
+  border-radius: 32px;
+  padding: 18px 22px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+  border: 1px solid #e5e7eb;
+}
+
+.module-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 30px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.module-title .icon {
+  width: 1.2em;
+  height: 1.2em;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.module-title .icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.calendar-header {
+  margin-bottom: 14px;
+  padding: 12px 16px;
+  background: #f9fafb;
+  border-radius: 24px;
+  border: 1px solid #e5e7eb;
+}
+
+.calendar-header .main-date {
+  font-weight: 700;
+  font-size: calc(23px * var(--fscale, 1));
+  color: #1f2937;
+}
+
+.calendar-header .lunar-detail {
+  font-size: calc(17px * var(--fscale, 1));
+  color: #4b5563;
+  margin-top: 6px;
+}
+
+.holiday-badge {
+  /* 负 margin 抵消父级 padding，让徽章文字与「主日期 / 农历节日」两行同列：
+     -16(margin) + 4(border-left) + 12(padding) = 0 */
+  margin: 10px 0 0 -16px;
+  color: #374151;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 6px 14px 6px 12px;
+  border-radius: 30px;
+  display: inline-block;
+  border-left: 4px solid #6b7280;
+  font-weight: 500;
+  font-size: calc(16px * var(--fscale, 1));
+}
+
+.countdown-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.countdown-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  /* 与其它板块列表行（.hot-item）的 8px 起点统一 */
+  padding: 10px 8px 10px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: calc(19px * var(--fscale, 1));
+  color: #374151;
+}
+
+.countdown-name {
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.countdown-days {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.countdown-item.highlight {
+  background: #f3f4f6;
+  /* 不再向左右突出：背景块与日历头部 / 带薪盒的卡片左缘对齐，文字与普通行同列 */
+  margin: 6px 0;
+  padding: 10px 8px 10px 16px;
+  border-radius: 20px;
+  border-bottom: none;
+  border: 1px solid #d1d5db;
+}
+
+.countdown-item.highlight .countdown-name {
+  color: #1f2937;
+  font-weight: 700;
+}
+
+.countdown-item.highlight .countdown-days {
+  background: #374151;
+  color: #ffffff;
+  padding: 5px 18px;
+  border-radius: 40px;
+  font-weight: 700;
+}
+
+.next-payday-box {
+  margin-top: 16px;
+  background: #f9fafb;
+  padding: 14px 16px;
+  border-radius: 24px;
+  border: 1px solid #e5e7eb;
+  color: #374151;
+  font-size: calc(18px * var(--fscale, 1));
+}
+
+.next-payday-box div {
+  margin-bottom: 4px;
+}
+
+/* 带薪盒内 emoji 占位列：不同 emoji（🎭 / 👨‍👩‍👧 / 📅 …）宽度不一，
+   固定宽度让后面的「节日 / 日期 / 时长 / 调休」文字形成整齐一列 */
+.next-payday-box .pd-ico {
+  display: inline-block;
+  min-width: 40px;
+  text-align: left;
+}
+
+.hot-list {
+  list-style: none;
+}
+
+.hot-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.hot-tag {
+  background: #374151;
+  color: #ffffff;
+  font-size: calc(16px * var(--fscale, 1));
+  padding: 4px 14px;
+  border-radius: 30px;
+  font-weight: 600;
+}
+
+.hot-title {
+  flex: 1;
+  color: #374151;
+  font-size: calc(19px * var(--fscale, 1));
+  line-height: 1.45;
+  font-weight: 500;
+}
+
+/* 抖音热搜网格 */
+.douyin-grid {
+  display: grid;
+  grid-template-columns: repeat(5, auto);
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.douyin-card {
+  text-align: center;
+  width: 230px;
+}
+
+.douyin-cover {
+  position: relative;
+  width: 230px;
+  height: 300px;
+  background: #f3f4f6;
+  border-radius: 20px;
+  overflow: hidden;
+  margin-bottom: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.douyin-cover img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+  background: transparent;
+  border-radius: 20px;
+}
+
+.cover-placeholder {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  background: #f9fafb;
+  color: #6b7280;
+  border-radius: 20px;
+}
+
+.rank-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  color: #1f2937;
+  font-size: calc(17px * var(--fscale, 1));
+  border: 1px solid #e5e7eb;
+  z-index: 2;
+}
+
+.douyin-card .douyin-title {
+  font-size: calc(18px * var(--fscale, 1));
+  font-weight: 600;
+  color: #374151;
+  margin: 6px 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 230px;
+}
+
+.douyin-card .douyin-hot {
+  font-size: calc(15px * var(--fscale, 1));
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.news-list {
+  list-style: none;
+}
+
+.news-item {
+  display: flex;
+  gap: 16px;
+  padding: 8px 6px;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: calc(19px * var(--fscale, 1));
+  color: #374151;
+  line-height: 1.5;
+}
+
+.news-bullet {
+  color: #1f2937;
+  font-weight: bold;
+  flex-shrink: 0;
+  font-size: calc(22px * var(--fscale, 1));
+}
+
+.single-column {
+  padding: 0 36px 6px 36px;
+}
+
+.content-module {
+  background: #ffffff;
+  border-radius: 32px;
+  padding: 18px 22px;
+  margin-bottom: 18px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+  border: 1px solid #e5e7eb;
+}
+
+.generated-time {
+  text-align: center;
+  font-size: calc(24px * var(--fscale, 1));
+  color: #6b7280;
+  padding: 10px 0 6px 0;
+  background: transparent;
+  letter-spacing: 2px;
+  font-weight: 500;
+  line-height: 1.6;
+}

@@ -1,0 +1,29 @@
+line-length = 120
+target-version = "py311"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".ruff_cache",
+    "build",
+    "dist",
+]
+
+[lint]
+# ASYNC：全异步项目里禁止在 async 函数中直接做阻塞 I/O（与框架根 ruff.toml 保持一致）。
+# 业务阻塞调用一律 asyncio.to_thread(...)。
+select = ["E", "F", "I", "W", "ASYNC"]
+# ASYNC109 只按「签名里有 timeout 参数」就报，不判断超时是否真的生效；与框架一致忽略。
+ignore = ["ASYNC109"]
+
+[lint.isort]
+combine-as-imports = true
+length-sort = true
+known-first-party = ["gsuid_core", "Furina_Daily"]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "local-folder",
+]

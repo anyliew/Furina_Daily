@@ -1,0 +1,33 @@
+[project]
+name = "gscore-furina-daily"
+# 运行时版本号在 Furina_Daily/version.py（GsCore 读它）；打包元数据用这里的值。
+# 改版本时两处一起改，避免 pip 装的版本和插件自报版本对不上。
+version = "2.1.1"
+description = "芙芙日报 - GsCore 上的二次元风格每日日报（新闻 / 摸鱼日历 / 热搜 / 新番，多主题出图与定时推送）"
+readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Anyliew" }]
+dependencies = [
+    "httpx>=0.24.0",
+    "jinja2>=3.1.0",
+    "lunar-python>=1.4.0",
+    "pillow>=9.0.0",
+    "playwright>=1.49.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/anyliew/Furina_Daily"
+Repository = "https://github.com/anyliew/Furina_Daily"
+Issues = "https://github.com/anyliew/Furina_Daily/issues"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# 显式声明包发现：插件根目录下同时存在 Docs/ 与 Furina_Daily/，
+# 交给 setuptools 自动判断 flat-layout 会直接报「Multiple top-level packages」。
+# 本插件以 git clone 到 GsCore/gsuid_core/plugins/ 的方式分发，不走 wheel 安装（资源目录随仓库分发）。
+[tool.setuptools.packages.find]
+include = ["Furina_Daily*"]

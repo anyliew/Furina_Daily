@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 本地工具链
+.venv/
+.venv*/
+.env
+.ruff_cache/
+.pytest_cache/
+.pyright/
+# 只忽略个人工作区状态，保留可共享的编辑器配置
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+
+# 运行期产物（正常应落在 data/Furina_Daily/，这里兜底防误提交）
+data/
+output/
+cache/*.png
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db
