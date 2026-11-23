@@ -42,6 +42,9 @@ _refresh_fail_streak = 0
 # 已注册的配置签名（推送时间 / 刷新时间 / 推送群列表），用于检测配置改动
 _registered_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None
 
+# 上一次「缺群且无 bot 元数据」告警的群集合，用于抑制每分钟重复的 warning
+_meta_warned: tuple[str, ...] | None = None
+
 
 def _effective_times() -> tuple[list[str], list[str]]:
     """读取实际要注册的推送/刷新时间；空列表回退默认，保证至少一个任务。"""
@@ -83,6 +86,14 @@ async def _push_daily(push_label: str) -> None:
     logger.info(f"[芙芙日报] 定时任务触发：{push_label}")
 
     subs = await gs_subscribe.get_subscribe(TASK_NAME)
+    if not subs:
+        # 到点仍为空：就地补一次。巡检周期（60s）与推送时刻可能错开，
+        # 例如 bot 刚重连、连接名变了，等下一轮巡检就会错过这次推送。
+        try:
+            await sync_subscriptions()
+        except Exception as exc:  # noqa: BLE001 - 补订阅失败仍按空订阅处理
+            logger.warning(f"[芙芙日报] 推送前补订阅失败：{exc}")
+        subs = await gs_subscribe.get_subscribe(TASK_NAME)
     if not subs:
         logger.warning("[芙芙日报] 日报推送订阅列表为空，跳过本次推送")
         return
@@ -149,34 +160,47 @@ async def _refresh_cache(refresh_label: str) -> None:
 async def _bot_metadata() -> dict | None:
     """给「配置里新加的群」找一组能投递的 bot 元数据。
 
-    优先复用本任务已有订阅行的 (bot_id, bot_self_id, WS_BOT_ID)；
-    本任务一条订阅都没有时，仅当恰好只有一个活跃 bot 且能在订阅表里
-    查到它的平台类型才借用——多 bot 在线时无法确定哪个号在那个群里，宁可不猜。
+    坑：`gss.active_bot` 的 key 是**连接名**（如 OneBot / napcat-xxx），
+    不是 bot_self_id（QQ 号），不能拿它去查 subscribe.bot_self_id。
+
+    WS_BOT_ID 必须是当前活跃连接名：Subscribe.send 先按它查 active_bot，
+    查不到再退化为「按 bot_id 反查」——而 _Bot.bot_id 同样是连接名，
+    跟 subscribe.bot_id（平台名 onebot）比不中，最终直接返回 -1 发不出去。
+    所以宁可不动，也不写一个失效的 WS_BOT_ID。
     """
+    from gsuid_core.gss import gss
     from gsuid_core.utils.database.models import Subscribe
 
-    subs = await gs_subscribe.get_subscribe(TASK_NAME)
-    if subs:
-        first = subs[0]
+    live = list(gss.active_bot)
+    if not live:
+        return None
+
+    ours = list(await gs_subscribe.get_subscribe(TASK_NAME) or [])
+    ours_ids = {row.id for row in ours}
+    rows = ours + [row for row in (await Subscribe.select_rows(distinct=False) or []) if row.id not in ours_ids]
+
+    # 1) 连接还活着的行：直接照搬，最稳
+    alive = [row for row in rows if row.bot_self_id and str(row.WS_BOT_ID) in live]
+    if alive:
+        row = alive[0]
         return {
-            "bot_id": first.bot_id,
-            "bot_self_id": first.bot_self_id,
-            "WS_BOT_ID": first.WS_BOT_ID,
+            "bot_id": row.bot_id,
+            "bot_self_id": row.bot_self_id,
+            "WS_BOT_ID": str(row.WS_BOT_ID),
         }
 
-    from gsuid_core.gss import gss
+    # 2) 只认识账号、连接名已变：仅当只有一个活跃连接时改用它
+    with_meta = [row for row in rows if row.bot_self_id]
+    if with_meta and len(live) == 1:
+        row = with_meta[0]
+        return {
+            "bot_id": row.bot_id,
+            "bot_self_id": row.bot_self_id,
+            "WS_BOT_ID": live[0],
+        }
 
-    if len(gss.active_bot) != 1:
-        return None
-    self_id = next(iter(gss.active_bot))
-    rows = await Subscribe.select_rows(distinct=False, bot_self_id=self_id)
-    if not rows:
-        return None
-    return {
-        "bot_id": rows[0].bot_id,
-        "bot_self_id": self_id,
-        "WS_BOT_ID": rows[0].WS_BOT_ID,
-    }
+    # 3) 多连接且没有可参照的行：不猜
+    return None
 
 
 async def sync_subscriptions() -> str:
@@ -189,6 +213,8 @@ async def sync_subscriptions() -> str:
     config = get_config()
     groups: list[str] = list(config["reportGroup"])
 
+    global _meta_warned
+
     subs = await gs_subscribe.get_subscribe(TASK_NAME)
     group_subs = {str(s.group_id): s for s in (subs or []) if s.group_id}
 
@@ -197,10 +223,15 @@ async def sync_subscriptions() -> str:
     if missing:
         meta = await _bot_metadata()
         if meta is None:
-            logger.warning(
-                f"[芙芙日报] 推送群 {missing} 无法自动补订阅：还没有任何可用 bot 元数据，"
-                "请先在对应群发送「开启日报推送」建立订阅，之后新群会自动同步"
-            )
+            # 每分钟都会重试，只在「缺的群集合变化」时提醒一次，避免刷日志
+            key = tuple(missing)
+            if key != _meta_warned:
+                logger.warning(
+                    f"[芙芙日报] 推送群 {missing} 无法自动补订阅：没有可用的 bot 元数据"
+                    "（需有一个已连接的适配器，且订阅表里存在该账号的记录）。"
+                    "可先在对应群发送「开启日报推送」建立订阅，之后新群会自动同步"
+                )
+                _meta_warned = key
         else:
             for gid in missing:
                 ev = Event(
@@ -213,6 +244,7 @@ async def sync_subscriptions() -> str:
                 )
                 await gs_subscribe.add_subscribe("session", TASK_NAME, ev)
                 added.append(gid)
+            _meta_warned = None
 
     removed: list[str] = []
     for gid in group_subs:
@@ -275,13 +307,22 @@ async def reschedule_jobs() -> None:
 
 
 async def _watch_config() -> None:
-    """轮询推送/刷新时间与推送群列表：WebConsole 保存配置后没有回调，靠这里在 1 分钟内生效。"""
+    """轮询推送/刷新时间与推送群列表：WebConsole 保存配置后没有回调，靠这里在 1 分钟内生效。
+
+    订阅同步每个周期都跑，不看签名是否变化：bot 连接常常晚于插件启动才建立，
+    启动那一次同步可能拿不到 bot 元数据（缺群补不上订阅），之后必须能自愈——
+    否则会一直保持空订阅，到点只能打一行「订阅列表为空，跳过本次推送」。
+    """
     push_times, refresh_times = _effective_times()
     signature = (tuple(push_times), tuple(refresh_times), tuple(get_config()["reportGroup"]))
     if signature != _registered_signature:
         logger.info("[芙芙日报] 检测到推送/刷新时间或推送群列表变化，重新注册定时任务")
         await reschedule_jobs()
+
+    try:
         await sync_subscriptions()
+    except Exception as exc:  # noqa: BLE001 - 巡检失败不中断下一轮，下个周期会重试
+        logger.error(f"[芙芙日报] 巡检同步推送订阅失败: {exc}")
 
 
 def _ensure_watch_job() -> None:
