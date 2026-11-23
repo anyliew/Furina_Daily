@@ -196,9 +196,15 @@ async def subscribe_group(bot: Bot, ev: Event) -> None:
         task_name=TASK_NAME,
         event=ev,
     )
+    # 事件里带着当下真正在服务本群的连接名：顺手把该群已有行的通道校准一遍，
+    # 这样「换过适配器 -> 行还在但发不出去」的问题在命令这一秒就被修掉，不必等巡检。
+    from ..push.scheduler import repair_group_channel
+
+    group = str(ev.group_id)
+    await repair_group_channel(group, str(ev.WS_BOT_ID or ""), str(ev.bot_self_id or ""))
+
     # reportGroup 是推送群的唯一数据源，命令写它，订阅表由定时巡检对齐
     config = get_config()
-    group = str(ev.group_id)
     groups = list(config["reportGroup"])
     if group not in groups:
         groups.append(group)
@@ -220,6 +226,20 @@ async def unsubscribe_group(bot: Bot, ev: Event) -> None:
     groups = [g for g in config["reportGroup"] if g != str(ev.group_id)]
     set_value("reportGroup", groups)
     await bot.send("❎ 已关闭日报推送。")
+
+
+# prefix=False：这个命令只吃裸关键词「日报自检」，不带 # 前缀（主人要求），
+# 其它命令保持原有前缀规则不变。
+@sv_admin.on_fullmatch("日报自检", prefix=False, block=True)
+async def self_check(bot: Bot, ev: Event) -> None:
+    """三层核对（配置群 / 订阅表 / 活跃连接）并顺手修复。"""
+    from ..push.scheduler import self_check_report
+
+    try:
+        await bot.send(await self_check_report())
+    except Exception as exc:  # noqa: BLE001 - 自检本身不能把命令打挂
+        logger.error(f"[芙芙日报] 日报自检失败: {exc}")
+        await _send_failure(bot, ev, exc)
 
 
 # ---------------------------------------------------------------------------

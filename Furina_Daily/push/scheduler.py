@@ -313,6 +313,91 @@ async def sync_subscriptions() -> str:
     return f"新增订阅 {len(added)} 个，修复通道 {len(repaired)} 个，移除 {len(removed)} 个"
 
 
+async def repair_group_channel(group_id: str, ws_bot_id: str, bot_self_id: str = "") -> int:
+    """把某群本任务的订阅行通道刷成事件自带的活连接名。
+
+    事件里的 ``WS_BOT_ID`` 来自 ``handler.py`` 的 ``event.WS_BOT_ID = ws.bot_id``，
+    是当下真正在服务这个群的连接名，比 60s 巡检依赖的 active_bot 快照更准、也更及时
+    （群里刚发过命令 = 这条连接一定活着）。只动本任务的行。
+    """
+    if not group_id or not ws_bot_id:
+        return 0
+
+    from gsuid_core.utils.database.models import Subscribe
+
+    fixed = 0
+    for row in await gs_subscribe.get_subscribe(TASK_NAME) or []:
+        if str(row.group_id or "") != group_id:
+            continue
+        patch: dict[str, str] = {}
+        if str(row.WS_BOT_ID or "") != ws_bot_id:
+            patch["WS_BOT_ID"] = ws_bot_id
+        if bot_self_id and not row.bot_self_id:
+            patch["bot_self_id"] = bot_self_id
+        if not patch:
+            continue
+        await Subscribe.update_data_by_data(select_data={"id": row.id}, update_data=patch)
+        fixed += 1
+    if fixed:
+        logger.info(f"[芙芙日报] 群 {group_id} 订阅行通道已校准 {fixed} 行 -> {ws_bot_id}")
+    return fixed
+
+
+async def self_check_report() -> str:
+    """三层核对：L1 配置群 -> L2 订阅表行 -> L3 活跃连接，并顺手修复。
+
+    三层之间框架没有任何对账机制（唯一的 ensure_owner 只覆盖「主人用户」且只处理空值），
+    所以「行还在但通道死了」这种漂移只能靠这里和 60s 巡检收敛。
+    """
+    config = get_config()
+    groups: list[str] = list(config["reportGroup"])
+    rows = list(await gs_subscribe.get_subscribe(TASK_NAME) or [])
+    live = list(gss.active_bot)
+
+    row_map = {str(r.group_id or ""): r for r in rows if r.group_id}
+    invalid = [g for g, r in row_map.items() if str(r.WS_BOT_ID or "") not in live]
+    no_self = [g for g, r in row_map.items() if not r.bot_self_id]
+    missing = [g for g in groups if g not in row_map]
+    extra = [g for g in row_map if g not in groups]
+
+    lines = ["🔍 日报自检"]
+    lines.append(f"L1 配置推送群：{len(groups)} 个" + (f"\n　{'、'.join(groups)}" if groups else "（空）"))
+    lines.append(f"L2 订阅表：{len(row_map)} 行（通道有效 {len(row_map) - len(invalid)}，通道失效 {len(invalid)}）")
+    lines.append(f"L3 活跃连接：{'、'.join(live) if live else '无'}")
+
+    problems: list[str] = []
+    if missing:
+        problems.append(f"缺订阅 {len(missing)} 个：{'、'.join(missing)}")
+    if extra:
+        problems.append(f"多余订阅 {len(extra)} 个：{'、'.join(extra)}")
+    if invalid:
+        problems.append(f"通道失效 {len(invalid)} 个：{'、'.join(invalid)}（WS_BOT_ID 不在活跃连接里）")
+    if no_self:
+        problems.append(f"缺机器人账号 {len(no_self)} 个：{'、'.join(no_self)}")
+    if not live:
+        problems.append("没有活跃连接：适配器没起来，本轮不做任何修复")
+    elif len(live) > 1:
+        problems.append(f"存在 {len(live)} 个活跃连接：不猜归属，只补缺/退订，不修通道")
+
+    if problems:
+        lines.append("问题：")
+        lines.extend(f"　· {item}" for item in problems)
+    else:
+        lines.append("问题：无，三层一致")
+
+    if not live:
+        lines.append("已跳过修复")
+        return "\n".join(lines)
+
+    result = await sync_subscriptions()
+    lines.append(f"自动核对修复：{result}")
+
+    rows_after = list(await gs_subscribe.get_subscribe(TASK_NAME) or [])
+    alive_after = sum(1 for r in rows_after if r.group_id and str(r.WS_BOT_ID or "") in gss.active_bot)
+    lines.append(f"修复后：{alive_after}/{len(rows_after)} 行通道有效")
+    return "\n".join(lines)
+
+
 async def reschedule_jobs() -> None:
     """按 pushTimes / refreshTimes 重设全部定时任务。"""
     global _registered_signature
