@@ -1,1 +1,1 @@
-Furina_Daily_version = "2.1.3"
+Furina_Daily_version = "2.1.4"

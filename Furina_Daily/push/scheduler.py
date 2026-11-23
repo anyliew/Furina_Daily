@@ -1,6 +1,8 @@
 """定时任务：多个推送时间 + 多个缓存刷新时间。
 
-遵循 GsCore 规范：主动推送一律走 gs_subscribe，不硬遍历 active_bot。
+遵循 GsCore 规范：主动推送一律走 gs_subscribe。唯一的例外是主人告警
+（utils/message_hint），因为框架的 send_msg_to_master 只发「主人用户」订阅里
+rowid 最小的那一行，那一行的 WS_BOT_ID 往往是失效的旧连接名，告警会被静默丢弃。
 缓存刷新只预生成图片、不发消息，作用是让用户随时取图都能命中缓存。
 """
 
@@ -10,6 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from gsuid_core.aps import scheduler
+from gsuid_core.gss import gss
 from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.segment import MessageSegment
@@ -105,21 +108,33 @@ async def _push_daily(push_label: str) -> None:
 
     message = MessageSegment.image(result.image)
     success = 0
+    unreachable = 0
     fail = 0
     for sub in subs:
         try:
-            await sub.send(message)
-            success += 1
+            ret = await sub.send(message)
         except Exception as exc:  # noqa: BLE001 - 单会话失败不影响其他订阅
             fail += 1
-            logger.warning(f"[芙芙日报] 推送失败（{sub.group_id or sub.user_id}）: {exc}")
+            logger.warning(f"[芙芙日报] 推送异常（{sub.group_id or sub.user_id}）: {exc}")
+            continue
+        if ret == -1:
+            # 框架只在「WS_BOT_ID 不在 active_bot 且按 bot_id 也反查不到」时返回 -1，
+            # 也就是订阅行的通道标识失效了（换过适配器 / 连接名变了）。它不抛异常，
+            # 不判返回值就会把没发出去的算成成功。
+            unreachable += 1
+            logger.warning(
+                f"[芙芙日报] 推送未送达（{sub.group_id or sub.user_id}）："
+                f"连接 {sub.WS_BOT_ID} 不在线，订阅行通道标识已失效，下一轮巡检会尝试修复"
+            )
+            continue
+        success += 1
 
     # 用本次生成时的 stats 快照，避免并发生成把状态覆盖成别人的结果
     stats = result.stats
     if stats.level == "degraded":
         names = "、".join(MODULE_NAMES.get(d.name, d.name) for d in stats.degraded)
         await notify_master(f"[芙芙日报] {push_label}：日报已推送，但以下模块降级：{names}", key="degraded")
-    logger.success(f"[芙芙日报] {push_label} 推送完成：成功 {success}，失败 {fail}")
+    logger.success(f"[芙芙日报] {push_label} 推送完成：成功 {success}，通道失效 {unreachable}，异常 {fail}")
 
 
 async def _refresh_cache(refresh_label: str) -> None:
@@ -168,7 +183,6 @@ async def _bot_metadata() -> dict | None:
     跟 subscribe.bot_id（平台名 onebot）比不中，最终直接返回 -1 发不出去。
     所以宁可不动，也不写一个失效的 WS_BOT_ID。
     """
-    from gsuid_core.gss import gss
     from gsuid_core.utils.database.models import Subscribe
 
     live = list(gss.active_bot)
@@ -204,24 +218,37 @@ async def _bot_metadata() -> dict | None:
 
 
 async def sync_subscriptions() -> str:
-    """让订阅表与 reportGroup 对齐：配置里有的补订阅，没有的退订。
+    """让订阅表与 reportGroup 对齐：缺的补、多的退、通道失效的修回来。
 
     reportGroup 是推送群的唯一数据源（WebConsole 与命令都可写），
     订阅表只是它的镜像，实际投递仍走 sub.send。
     只动 task_name == TASK_NAME 的行，不影响其他任务的订阅。
+
+    三种偏差都得修，缺一不可：
+    1. 配置有、表里没有 -> 补订阅（需要一对能投递的 bot 元数据）；
+    2. 配置没有、表里有 -> 退订；
+    3. 表里有、但 WS_BOT_ID 已不是活连接 -> 把通道标识改回当前连接名。
+       这条最容易漏：Subscribe.send 先查 gss.active_bot[WS_BOT_ID]，查不到再用
+       bot_id 反查，而 _Bot.bot_id 是连接名、subscribe.bot_id 是平台名，永远比不中
+       -> 返回 -1。换过适配器（连接名变化）后不修这一列，就只会静默失败。
     """
     config = get_config()
     groups: list[str] = list(config["reportGroup"])
 
     global _meta_warned
 
-    subs = await gs_subscribe.get_subscribe(TASK_NAME)
-    group_subs = {str(s.group_id): s for s in (subs or []) if s.group_id}
+    subs = list(await gs_subscribe.get_subscribe(TASK_NAME) or [])
+    group_subs = {str(s.group_id): s for s in subs if s.group_id}
+
+    live = list(gss.active_bot)
+    missing = [g for g in groups if g not in group_subs]
+    # 只有「缺群」或「行里缺账号」时才解析元数据，平时省掉一次全表扫描
+    meta: dict | None = None
+    if missing or any(not s.bot_self_id for s in subs if s.group_id):
+        meta = await _bot_metadata()
 
     added: list[str] = []
-    missing = [g for g in groups if g not in group_subs]
     if missing:
-        meta = await _bot_metadata()
         if meta is None:
             # 每分钟都会重试，只在「缺的群集合变化」时提醒一次，避免刷日志
             key = tuple(missing)
@@ -246,6 +273,28 @@ async def sync_subscriptions() -> str:
                 added.append(gid)
             _meta_warned = None
 
+    # 通道修复：只在「恰好一个活连接」时动手。
+    # 0 个连接 = 适配器没起来，改了就是瞎猜；多个连接 = 无法判断这行原本属于哪个账号。
+    repaired: list[str] = []
+    if len(live) == 1:
+        from gsuid_core.utils.database.models import Subscribe
+
+        conn = live[0]
+        live_self_id = meta["bot_self_id"] if meta is not None else ""
+        for sub in subs:
+            gid = str(sub.group_id or "")
+            if not gid or gid not in groups:
+                continue  # 待退订的行不修，省一次写
+            patch: dict[str, str] = {}
+            if str(sub.WS_BOT_ID or "") != conn:
+                patch["WS_BOT_ID"] = conn
+            if not sub.bot_self_id and live_self_id:
+                patch["bot_self_id"] = live_self_id
+            if not patch:
+                continue
+            await Subscribe.update_data_by_data(select_data={"id": sub.id}, update_data=patch)
+            repaired.append(gid)
+
     removed: list[str] = []
     for gid in group_subs:
         if gid not in groups:
@@ -256,11 +305,12 @@ async def sync_subscriptions() -> str:
             )
             removed.append(gid)
 
-    if added or removed:
+    if added or repaired or removed:
         logger.success(
-            f"[芙芙日报] 推送群配置已同步到订阅表：新增 {added or '无'}，移除 {removed or '无'}"
+            f"[芙芙日报] 推送群配置已同步到订阅表：新增 {added or '无'}，"
+            f"修复通道 {repaired or '无'}，移除 {removed or '无'}"
         )
-    return f"新增订阅 {len(added)} 个，移除 {len(removed)} 个"
+    return f"新增订阅 {len(added)} 个，修复通道 {len(repaired)} 个，移除 {len(removed)} 个"
 
 
 async def reschedule_jobs() -> None:
